@@ -1,0 +1,26 @@
+# Secrets — NEVER commit
+.env
+.env.dev
+.env.test
+.env.prod
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Virtual environment
+venv/
+.venv/
+
+# Logs
+logs/
+*.log
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
