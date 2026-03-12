@@ -1,0 +1,134 @@
+# .github/workflows/ci.yml
+# ═══════════════════════════════════════════════════════════
+# PURPOSE: CI pipeline — runs on every push and pull request
+#
+# WHAT THIS DOES:
+#   1. Spins up fresh Ubuntu machine
+#   2. Installs Python 3.11
+#   3. Installs all dependencies
+#   4. Runs all unit tests
+#   5. Reports pass/fail back to GitHub
+#
+# WHY Ubuntu not Windows?
+#   CI servers almost always run Linux
+#   Cheaper, faster, industry standard
+#   Our code is cross-platform so it works fine ✅
+# ═══════════════════════════════════════════════════════════
+
+name: Retail ETL CI
+
+# ─────────────────────────────────────────────────────────
+# TRIGGERS — when does this pipeline run?
+#
+# on: push     → runs every time you push any branch
+# on: pull_request → runs when you open a PR to main
+#
+# WHY both?
+# push         → catch errors as early as possible
+# pull_request → required check before merging to main
+# ─────────────────────────────────────────────────────────
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    # ── Where to run ──────────────────────────────────────
+    # ubuntu-latest = fresh Linux VM every run
+    # Every run starts completely clean:
+    # no leftover files, no cached state, no surprises
+    runs-on: ubuntu-latest
+
+    # ── Python version matrix ─────────────────────────────
+    # strategy.matrix lets you test multiple versions
+    # We test on 3.11 only (matches our local setup)
+    # In production you might test 3.10, 3.11, 3.12
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      # ── Step 1: Check out your code ─────────────────────
+      # actions/checkout downloads your repo onto the VM
+      # Without this → VM has no code to test ❌
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Step 2: Install Python ───────────────────────────
+      # actions/setup-python installs exact version
+      # python-version comes from matrix above
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # ── Step 3: Cache dependencies ───────────────────────
+      # WHY cache?
+      # pip install takes 30-60 seconds every run
+      # Cache saves installed packages between runs
+      # If requirements.txt hasn't changed → skip install
+      # Speeds up CI from ~90s to ~20s ✅
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # ── Step 4: Install dependencies ────────────────────
+      # pip install -r requirements.txt
+      # Installs everything your pipeline needs
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── Step 5: Create .env.test ─────────────────────────
+      # WHY?
+      # CI machine has no .env files (they're gitignored)
+      # Our config.py reads .env.test when ENV=test
+      # We create a minimal one for CI
+      #
+      # No real database in CI → DB values are placeholders
+      # Unit tests don't connect to database so this is fine
+      - name: Create .env.test for CI
+        run: |
+          echo "ENV=test" > .env.test
+          echo "DB_SERVER=localhost" >> .env.test
+          echo "DB_PORT=5432" >> .env.test
+          echo "DB_NAME=retail_etl_test" >> .env.test
+          echo "DB_USER=etl_user" >> .env.test
+          echo "DB_PASSWORD=placeholder" >> .env.test
+          echo "API_BASE_URL=https://fakestoreapi.com" >> .env.test
+
+      # ── Step 6: Create logs directory ───────────────────
+      # logger.py writes to logs/retail_etl.log
+      # That directory must exist or logger crashes
+      - name: Create logs directory
+        run: mkdir -p logs
+
+      # ── Step 7: Run unit tests ───────────────────────────
+      # ENV=test → loads .env.test → no real DB needed
+      # tests/unit/ only → no integration tests in CI
+      # --tb=short → concise error output in CI logs
+      # -v → show each test name so failures are obvious
+      - name: Run unit tests
+        env:
+          ENV: test
+        run: |
+          pytest tests/unit/ -v --tb=short
+
+      # ── Step 8: Test summary ─────────────────────────────
+      # Always runs even if tests fail
+      # Shows how many passed/failed in GitHub UI
+      - name: Upload test results
+        if: always()
+        run: |
+          echo "Unit tests complete"
+          pytest tests/unit/ --tb=no -q
